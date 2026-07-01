@@ -1,0 +1,51 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Client: a billing entity (person or company)
+model Client {
+  id         String    @id @default(uuid())
+  name       String
+  email      String?
+  vaultLink  String?   // vault [[wikilink]] to related Contact/Relationship note
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  invoices   Invoice[]
+}
+
+// Invoice: issued to a client, may have multiple payments
+model Invoice {
+  id        String    @id @default(uuid())
+  clientId  String
+  client    Client    @relation(fields: [clientId], references: [id])
+  amount    Decimal
+  currency  String    @default("USD")
+  dueDate   DateTime?
+  status    String    @default("pending") // pending | paid | overdue
+  pdfPath   String?
+  notes     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  payments  Payment[]
+
+  @@index([clientId])
+  @@index([status])
+}
+
+// Payment: a received payment against an invoice
+model Payment {
+  id        String   @id @default(uuid())
+  invoiceId String
+  invoice   Invoice  @relation(fields: [invoiceId], references: [id])
+  amount    Decimal
+  date      DateTime
+  method    String?  // bank_transfer | card | check | cash | other
+  createdAt DateTime @default(now())
+
+  @@index([invoiceId])
+}
