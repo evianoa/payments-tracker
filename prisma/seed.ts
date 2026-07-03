@@ -5,6 +5,7 @@ const prisma = new PrismaClient();
 async function main() {
   const client = await prisma.client.create({
     data: {
+      key: "triple9",
       name: "Triple9 Apartments",
       email: "billing@triple9.example.com",
       vaultLink: "[[people/triple9]]",

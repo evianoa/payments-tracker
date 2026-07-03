@@ -2,6 +2,9 @@
 FROM node:22-alpine AS base
 RUN corepack enable && corepack prepare pnpm@9.9.0 --activate
 
+# Native module build tools (needed for better-sqlite3)
+RUN apk add --no-cache python3 make g++
+
 WORKDIR /app
 
 FROM base AS deps

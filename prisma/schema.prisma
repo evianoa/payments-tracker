@@ -10,6 +10,7 @@ datasource db {
 // Client: a billing entity (person or company)
 model Client {
   id         String    @id @default(uuid())
+  key        String    @unique  // pipeline key e.g. "hetzner", "triple9"
   name       String
   email      String?
   vaultLink  String?   // vault [[wikilink]] to related Contact/Relationship note
