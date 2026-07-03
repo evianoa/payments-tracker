@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 
 interface Client {
   id: string;
@@ -17,6 +17,7 @@ interface Invoice {
   dueDate: string | null;
   status: string;
   pdfPath: string | null;
+  pdfUrl: string | null;
   notes: string | null;
   createdAt: string;
   client: Client;
@@ -27,6 +28,9 @@ interface EmailDraft {
   body: string;
   gmailUrl: string;
 }
+
+type SortKey = "status" | "client" | "amount" | "dueDate" | "daysOverdue";
+type SortDir = "asc" | "desc";
 
 function TrafficDot({ light }: { light: "green" | "amber" | "red" }) {
   const colors = { green: "bg-green-500", amber: "bg-yellow-500", red: "bg-red-500" };
@@ -109,19 +113,135 @@ function MarkPaidButton({ invoiceId }: { invoiceId: string }) {
   );
 }
 
-function InvoiceRow({ invoice }: { invoice: Invoice }) {
+function SortHeader({
+  label,
+  sortKey,
+  currentKey,
+  direction,
+  onSort,
+}: {
+  label: string;
+  sortKey: SortKey;
+  currentKey: SortKey;
+  direction: SortDir;
+  onSort: (key: SortKey) => void;
+}) {
+  const active = currentKey === sortKey;
+  return (
+    <th
+      className="px-4 py-3 text-left font-medium text-gray-500 cursor-pointer select-none hover:text-gray-700"
+      onClick={() => onSort(sortKey)}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        {active && (
+          <span className="text-xs">{direction === "asc" ? "▲" : "▼"}</span>
+        )}
+      </span>
+    </th>
+  );
+}
+
+function InvoiceDetailModal({
+  invoice,
+  onClose,
+}: {
+  invoice: Invoice;
+  onClose: () => void;
+}) {
+  const { light, daysOverdue } = useTrafficLight(invoice.dueDate, invoice.status);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={onClose}>
+      <div
+        className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-bold text-gray-900">{invoice.client.name}</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+        </div>
+
+        <div className="space-y-3 text-sm">
+          <div className="flex items-center gap-2">
+            <TrafficDot light={light} />
+            <span className="font-medium capitalize">{invoice.status}</span>
+            {daysOverdue > 0 && (
+              <span className={light === "red" ? "text-red-600" : "text-amber-600"}>
+                {daysOverdue}d overdue
+              </span>
+            )}
+          </div>
+
+          <div className="border-t pt-3 space-y-2">
+            <Row label="Amount" value={new Intl.NumberFormat("en-US", {
+              style: "currency",
+              currency: invoice.currency,
+            }).format(Number(invoice.amount))} />
+            <Row label="Due Date" value={invoice.dueDate
+              ? new Date(invoice.dueDate).toLocaleDateString("en-US", {
+                  year: "numeric", month: "long", day: "numeric",
+                })
+              : "—"} />
+            <Row label="Client Email" value={invoice.client.email || "—"} />
+            {invoice.client.vaultLink && (
+              <Row label="Vault Link" value={`[[${invoice.client.vaultLink}]]`} />
+            )}
+            {invoice.pdfUrl && (
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500">PDF</span>
+                <a
+                  href={invoice.pdfUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 hover:underline font-medium"
+                >
+                  View Invoice
+                </a>
+              </div>
+            )}
+            {invoice.notes && <Row label="Notes" value={invoice.notes} />}
+          </div>
+
+          <div className="border-t pt-3 flex gap-2">
+            {light === "red" && <DraftButton invoiceId={invoice.id} />}
+            <MarkPaidButton invoiceId={invoice.id} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-gray-500">{label}</span>
+      <span className="font-medium text-gray-900">{value}</span>
+    </div>
+  );
+}
+
+function InvoiceRow({
+  invoice,
+  onSelect,
+}: {
+  invoice: Invoice;
+  onSelect: (inv: Invoice) => void;
+}) {
   const { light, daysOverdue } = useTrafficLight(invoice.dueDate, invoice.status);
   const isRed = light === "red";
 
   return (
-    <tr className={isRed ? "bg-red-50 hover:bg-red-100" : "hover:bg-gray-50"}>
+    <tr
+      className={`${isRed ? "bg-red-50 hover:bg-red-100" : "hover:bg-gray-50"} cursor-pointer`}
+      onClick={() => onSelect(invoice)}
+    >
       <td className="px-4 py-3"><TrafficDot light={light} /></td>
       <td className="px-4 py-3 font-medium text-gray-900">
         {invoice.client.name}
         {invoice.client.vaultLink && (
-          <span className="ml-2 text-xs text-blue-500 cursor-pointer hover:underline">
-            [[{invoice.client.vaultLink}]]
-          </span>
+          <span className="ml-2 text-xs text-blue-500">[[{invoice.client.vaultLink}]]</span>
         )}
       </td>
       <td className="px-4 py-3 text-right text-gray-700">
@@ -147,7 +267,18 @@ function InvoiceRow({ invoice }: { invoice: Invoice }) {
         )}
       </td>
       <td className="px-4 py-3 text-center">
-        <div className="flex items-center justify-center gap-2">
+        <div className="flex items-center justify-center gap-2" onClick={(e) => e.stopPropagation()}>
+          {invoice.pdfUrl && (
+            <a
+              href={invoice.pdfUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:underline text-xs font-medium"
+              onClick={(e) => e.stopPropagation()}
+            >
+              PDF
+            </a>
+          )}
           {isRed && <DraftButton invoiceId={invoice.id} />}
           <MarkPaidButton invoiceId={invoice.id} />
         </div>
@@ -160,6 +291,9 @@ export default function DashboardPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey>("dueDate");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
 
   useEffect(() => {
     fetch("/api/invoices")
@@ -167,6 +301,65 @@ export default function DashboardPage() {
       .then((data) => { setInvoices(data); setLoading(false); })
       .catch(() => { setError("Failed to load invoices. Is the dev server running?"); setLoading(false); });
   }, []);
+
+  const handleSort = useCallback((key: SortKey) => {
+    setSortKey((prev) => {
+      if (prev === key) {
+        setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+        return prev;
+      }
+      setSortDir("asc");
+      return key;
+    });
+  }, []);
+
+  const trafficLightValue = useCallback((inv: Invoice): number => {
+    if (inv.status === "paid") return 0;
+    if (!inv.dueDate) return 1;
+    const diff = Math.floor(
+      (new Date().getTime() - new Date(inv.dueDate).getTime()) / 86_400_000
+    );
+    if (diff >= 8) return 3;
+    if (diff >= 1 || (diff <= 0 && diff >= -7)) return 2;
+    return 1;
+  }, []);
+
+  const sorted = useMemo(() => {
+    const list = [...invoices];
+    list.sort((a, b) => {
+      let cmp = 0;
+      switch (sortKey) {
+        case "status":
+          cmp = trafficLightValue(a) - trafficLightValue(b);
+          break;
+        case "client":
+          cmp = a.client.name.localeCompare(b.client.name);
+          break;
+        case "amount":
+          cmp = Number(a.amount) - Number(b.amount);
+          break;
+        case "dueDate": {
+          if (!a.dueDate && !b.dueDate) cmp = 0;
+          else if (!a.dueDate) cmp = 1;
+          else if (!b.dueDate) cmp = -1;
+          else cmp = new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+          break;
+        }
+        case "daysOverdue": {
+          const aDiff = a.dueDate
+            ? Math.floor((new Date().getTime() - new Date(a.dueDate).getTime()) / 86_400_000)
+            : 0;
+          const bDiff = b.dueDate
+            ? Math.floor((new Date().getTime() - new Date(b.dueDate).getTime()) / 86_400_000)
+            : 0;
+          cmp = aDiff - bDiff;
+          break;
+        }
+      }
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    return list;
+  }, [invoices, sortKey, sortDir, trafficLightValue]);
 
   if (loading) return (
     <main className="p-8"><p className="text-gray-500">Loading invoices...</p></main>
@@ -194,21 +387,28 @@ export default function DashboardPage() {
           <table className="min-w-full divide-y divide-gray-200 text-sm">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Client</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Due Date</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Days Overdue</th>
+                <SortHeader label="Status" sortKey="status" currentKey={sortKey} direction={sortDir} onSort={handleSort} />
+                <SortHeader label="Client" sortKey="client" currentKey={sortKey} direction={sortDir} onSort={handleSort} />
+                <SortHeader label="Amount" sortKey="amount" currentKey={sortKey} direction={sortDir} onSort={handleSort} />
+                <SortHeader label="Due Date" sortKey="dueDate" currentKey={sortKey} direction={sortDir} onSort={handleSort} />
+                <SortHeader label="Days Overdue" sortKey="daysOverdue" currentKey={sortKey} direction={sortDir} onSort={handleSort} />
                 <th className="px-4 py-3 text-center font-medium text-gray-500">Actions</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-100">
-              {invoices.map((invoice) => (
-                <InvoiceRow key={invoice.id} invoice={invoice} />
+              {sorted.map((invoice) => (
+                <InvoiceRow key={invoice.id} invoice={invoice} onSelect={setSelectedInvoice} />
               ))}
             </tbody>
           </table>
         </div>
+      )}
+
+      {selectedInvoice && (
+        <InvoiceDetailModal
+          invoice={selectedInvoice}
+          onClose={() => setSelectedInvoice(null)}
+        />
       )}
     </main>
   );
